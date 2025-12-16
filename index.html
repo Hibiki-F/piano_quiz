@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>音程鍵盤クイズ</title>
+<style>
+  body { font-family: "Helvetica Neue", Arial, sans-serif; text-align: center; padding: 20px; color: #333; }
+  
+  /* 設定エリア */
+  .settings-container { 
+    background: #f9f9f9; 
+    border: 1px solid #ddd; 
+    border-radius: 8px; 
+    padding: 15px; 
+    margin: 0 auto 20px auto; 
+    max-width: 700px;
+    text-align: left;
+  }
+  .settings-group { margin-bottom: 10px; }
+  .settings-title { font-weight: bold; display: inline-block; width: 100px; }
+  .settings-options label { margin-right: 15px; cursor: pointer; }
+  
+  /* ボタン */
+  button#start-btn { 
+    background-color: #007bff; color: white; border: none; 
+    padding: 10px 25px; font-size: 16px; border-radius: 5px; 
+    cursor: pointer; display: block; margin: 15px auto 0 auto;
+    transition: background-color 0.2s;
+  }
+  button#start-btn:hover { background-color: #0056b3; }
+  button#start-btn.attention { background-color: #FF9800; animation: pulse 2s infinite; }
+
+  @keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+  }
+
+  /* 鍵盤エリア */
+  .piano-wrapper { display: flex; justify-content: center; margin-top: 20px; }
+  .piano-container { position: relative; height: 200px; user-select: none; }
+  
+  .key { position: absolute; border: 1px solid #333; border-radius: 0 0 5px 5px; cursor: pointer; box-sizing: border-box; transition: background-color 0.1s; }
+  
+  /* 白鍵・黒鍵 */
+  .white-key { width: 40px; height: 200px; background: white; z-index: 1; }
+  .white-key:hover { background: #f0f0f0; }
+  .black-key { width: 24px; height: 120px; background: black; z-index: 2; }
+  .black-key:hover { background: #333; }
+  
+  /* ハイライトとフィードバック */
+  .highlight { background: #4CAF50 !important; }
+  .correct { background: #2196F3 !important; }
+  .wrong { background: #F44336 !important; }
+  
+  /* 無効状態（設定変更時など） */
+  .piano-disabled { opacity: 0.5; pointer-events: none; }
+
+  #question-text { font-size: 1.4em; font-weight: bold; margin: 20px 0; min-height: 1.5em; color: #444; }
+  #feedback { margin-top: 10px; font-weight: bold; height: 24px; font-size: 1.1em; }
+</style>
+</head>
+<body>
+
+<div class="settings-container">
+  <div class="settings-group">
+    <span class="settings-title">出題音程:</span>
+    <span class="settings-options">
+      <label><input type="checkbox" id="chk-m2" value="1" checked class="setting-input"> 短2度</label>
+      <label><input type="checkbox" id="chk-M2" value="2" checked class="setting-input"> 長2度</label>
+      <label><input type="checkbox" id="chk-m3" value="3" class="setting-input"> 短3度</label>
+      <label><input type="checkbox" id="chk-M3" value="4" class="setting-input"> 長3度</label>
+    </span>
+  </div>
+
+  <div class="settings-group">
+    <span class="settings-title">進行方向:</span>
+    <span class="settings-options">
+      <label><input type="radio" name="direction" value="up" checked class="setting-input"> 上へ（上行）</label>
+      <label><input type="radio" name="direction" value="down" class="setting-input"> 下へ（下行）</label>
+      <label><input type="radio" name="direction" value="random" class="setting-input"> ランダム</label>
+    </span>
+  </div>
+
+  <button id="start-btn">スタート / リセット</button>
+</div>
+
+<div id="question-text">設定を選んでスタートを押してください</div>
+
+<div class="piano-wrapper">
+  <div class="piano-container" id="piano"></div>
+</div>
+
+<div id="feedback"></div>
+
+<script>
+// 即時関数でスコープを閉じ込める
+(function() {
+  'use strict';
+
+  // 設定
+  const keyWidth = 40; // 白鍵1つの幅
+  const totalKeys = 24; // 鍵盤の総数
+  const pianoDiv = document.getElementById('piano');
+  const scalePattern = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
+ 
+  // HTML要素参照
+  const questionText = document.getElementById('question-text');
+  const feedbackText = document.getElementById('feedback');
+  const startBtn = document.getElementById('start-btn');
+  const allInputs = document.querySelectorAll('.setting-input'); // 全ての設定入力
+  
+  const checkBoxes = {
+    m2: document.getElementById('chk-m2'),
+    M2: document.getElementById('chk-M2'),
+    m3: document.getElementById('chk-m3'),
+    M3: document.getElementById('chk-M3')
+  };
+  const radioDirections = document.getElementsByName('direction');
+
+  let keysElements = [];
+  let targetNote = null;
+  let hasStarted = false; // ゲームが始まったかどうか
+  let isWaiting = false; // 回答待ち状態かどうか
+  let autoNextTimer = null; // 自動遷移のタイマーID
+
+  // 初期化処理
+  function init() {
+    renderPiano();
+    startBtn.addEventListener('click', startGame);
+    // 全ての設定項目に変更検知イベントを追加
+    allInputs.forEach(input => {
+      input.addEventListener('change', onSettingsChanged);
+    });
+  }
+
+  // 鍵盤描画
+  function renderPiano() {
+    let whiteCount = 0;
+    
+    // 鍵盤生成ループ
+    for (let i = 0; i < totalKeys; i++) {
+      const isBlack = scalePattern[i % 12] === 1;
+      const keyDiv = document.createElement('div');
+      
+      keyDiv.classList.add('key');
+      keyDiv.classList.add(isBlack ? 'black-key' : 'white-key');
+      
+      if (isBlack) {
+        // 黒鍵の位置計算
+        keyDiv.style.left = (whiteCount * keyWidth - 12) + 'px';
+      } else {
+        // 白鍵の位置計算
+        keyDiv.style.left = (whiteCount * keyWidth) + 'px';
+        whiteCount++; // 白鍵カウントのみ進める
+      }
+
+      keyDiv.addEventListener('click', function() {
+        checkAnswer(i, keyDiv);
+      });
+
+      pianoDiv.appendChild(keyDiv);
+      keysElements.push(keyDiv);
+    }
+    
+    // コンテナの幅を、生成された白鍵の総幅に合わせて動的に設定
+    pianoDiv.style.width = (whiteCount * keyWidth) + 'px';
+    // 最初は無効状態にしておく
+    pianoDiv.classList.add('piano-disabled');
+  }
+
+  // 設定変更時の処理
+  function onSettingsChanged() {
+    // まだゲームが始まっていない場合は、何もしない
+    if (!hasStarted) return;
+
+    // ゲーム進行をストップ
+    isWaiting = false;
+    clearTimeout(autoNextTimer);
+
+    // UIのリセット
+    keysElements.forEach(k => {
+      k.classList.remove('highlight', 'correct', 'wrong');
+    });
+    pianoDiv.classList.add('piano-disabled');
+
+    // メッセージとボタンの状態変更
+    feedbackText.textContent = "設定が変更されました。再開するにはスタートボタンを押してください。";
+    feedbackText.style.color = "#FF9800";
+    questionText.textContent = "---";
+
+    startBtn.textContent = "スタート";
+    startBtn.classList.add('attention');
+  }
+
+  // ゲーム開始（or リセット）
+  function startGame() {
+    hasStarted = true;
+
+    // ボタンのスタイル戻し
+    startBtn.classList.remove('attention');
+    startBtn.textContent = "リセット";
+
+    // 鍵盤有効化
+    pianoDiv.classList.remove('piano-disabled');
+    // 次の問題へ
+    nextQuestion();
+  }
+
+  // 問題の出題
+  function nextQuestion() {
+    clearTimeout(autoNextTimer);
+
+    // 選択された音程の取得
+    const allowedIntervals = [];
+    if(checkBoxes.m2.checked) allowedIntervals.push({val:1, name:'短2度'});
+    if(checkBoxes.M2.checked) allowedIntervals.push({val:2, name:'長2度'});
+    if(checkBoxes.m3.checked) allowedIntervals.push({val:3, name:'短3度'});
+    if(checkBoxes.M3.checked) allowedIntervals.push({val:4, name:'長3度'});
+
+    if (allowedIntervals.length === 0) {
+      alert("少なくとも1つの音程を選んでください");
+      return;
+    }
+
+    // 方向の決定
+    let selectedDir = 'up';
+    for(const radio of radioDirections) {
+      if(radio.checked) {
+        selectedDir = radio.value;
+        break;
+      }
+    }
+    let currentDir = selectedDir;
+    if (selectedDir === 'random') {
+      currentDir = Math.random() < 0.5 ? 'up' : 'down';
+    }
+
+    // リセット
+    keysElements.forEach(k => {
+      k.classList.remove('highlight', 'correct', 'wrong');
+    });
+    feedbackText.textContent = "";
+
+    // 音程と基準音の決定
+    const intervalObj = allowedIntervals[Math.floor(Math.random() * allowedIntervals.length)];
+    const intervalVal = intervalObj.val;
+    
+    let rootNote;
+    
+    // 出題範囲の計算
+    if (currentDir === 'up') {
+      const maxRoot = (totalKeys - 1) - intervalVal; 
+      rootNote = Math.floor(Math.random() * (maxRoot + 1));
+      targetNote = rootNote + intervalVal;
+    } else {
+      const minRoot = intervalVal; 
+      rootNote = Math.floor(Math.random() * (totalKeys - minRoot)) + minRoot;
+      targetNote = rootNote - intervalVal;
+    }
+
+    // UI更新
+    keysElements[rootNote].classList.add('highlight');
+    const directionText = currentDir === 'up' ? '上' : '下';
+    questionText.textContent = `光っているキーの「${intervalObj.name} ${directionText}」を選択してください`;
+    
+    isWaiting = true;
+  }
+
+  // 正誤判定
+  function checkAnswer(noteIndex, keyElement) {
+    if (!isWaiting) return;
+
+    if (noteIndex === targetNote) {
+      // 正解処理
+      keyElement.classList.add('correct');
+      feedbackText.textContent = "正解！";
+      feedbackText.style.color = "#2196F3";
+
+      // 連打防止のため入力をロック
+      isWaiting = false;
+
+      // 2000ミリ秒（2秒）後に次の問題へ
+      autoNextTimer = setTimeout(function() {
+        nextQuestion();
+      }, 2000);
+    } else {
+      // 不正解処理
+      keyElement.classList.add('wrong');
+      feedbackText.textContent = "残念！もう一度探してみよう！";
+      feedbackText.style.color = "#F44336";
+
+      setTimeout(function() {
+        keyElement.classList.remove('wrong');
+      }, 500);
+      // 不正解の場合は isWaiting を false にしない（入力を受け付け続ける）
+    }
+  }
+
+  init();
+
+})();
+</script>
+
+</body>
+</html>
