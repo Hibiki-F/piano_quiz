@@ -84,6 +84,15 @@
     </span>
   </div>
 
+  <div class="settings-group">
+    <span class="settings-title">音声設定:</span>
+    <span class="settings-options">
+      <label style="color: #007bff; font-weight: bold;">
+        <input type="checkbox" id="chk-sound" checked> 音程を再生する
+      </label>
+    </span>
+  </div>
+
   <button id="start-btn">スタート / リセット</button>
 </div>
 
@@ -103,6 +112,7 @@
   // 設定
   const keyWidth = 40; // 白鍵1つの幅
   const totalKeys = 24; // 鍵盤の総数
+  const startMIDINote = 60;
   const pianoDiv = document.getElementById('piano');
   const scalePattern = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
  
@@ -116,15 +126,49 @@
     m2: document.getElementById('chk-m2'),
     M2: document.getElementById('chk-M2'),
     m3: document.getElementById('chk-m3'),
-    M3: document.getElementById('chk-M3')
+    M3: document.getElementById('chk-M3'),
+    sound: document.getElementById('chk-sound')
   };
   const radioDirections = document.getElementsByName('direction');
 
   let keysElements = [];
   let targetNote = null;
+  let rootNote = null;
   let hasStarted = false; // ゲームが始まったかどうか
   let isWaiting = false; // 回答待ち状態かどうか
   let autoNextTimer = null; // 自動遷移のタイマーID
+
+  let audioCtx = null;
+
+  function playTone(freq, duration = 2.0, type = 'sine') { 
+    // 音なし設定なら何もしない
+    if (!checkBoxes.sound.checked) return;
+    if (!audioCtx) return;
+
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    
+    // エンベロープ（音の形）をピアノっぽく余韻を長くする
+    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.05); // アタック
+    // 減衰時間を duration に合わせてゆったりにする
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration); 
+    
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  }
+
+  function getFrequency(index) {
+    const midiNumber = startMIDINote + index;
+    // A4 = 440Hz (MIDI番号 69) を基準とした平均律の式
+    return 440.0 * Math.pow(2, (midiNumber - 69) / 12.0);
+  }
 
   // 初期化処理
   function init() {
@@ -158,6 +202,9 @@
       }
 
       keyDiv.addEventListener('click', function() {
+        if(hasStarted) {
+            playTone(getFrequency(i), 1.0, 'triangle'); 
+        }
         checkAnswer(i, keyDiv);
       });
 
@@ -197,6 +244,12 @@
 
   // ゲーム開始（or リセット）
   function startGame() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } else if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+
     hasStarted = true;
 
     // ボタンのスタイル戻し
@@ -248,8 +301,6 @@
     const intervalObj = allowedIntervals[Math.floor(Math.random() * allowedIntervals.length)];
     const intervalVal = intervalObj.val;
     
-    let rootNote;
-    
     // 出題範囲の計算
     if (currentDir === 'up') {
       const maxRoot = (totalKeys - 1) - intervalVal; 
@@ -263,6 +314,7 @@
 
     // UI更新
     keysElements[rootNote].classList.add('highlight');
+    playTone(getFrequency(rootNote), 1.5, 'triangle');
     const directionText = currentDir === 'up' ? '上' : '下';
     questionText.textContent = `光っているキーの「${intervalObj.name} ${directionText}」を選択してください`;
     
@@ -279,13 +331,18 @@
       feedbackText.textContent = "正解！";
       feedbackText.style.color = "#2196F3";
 
+      setTimeout(() => {
+          playTone(getFrequency(rootNote), 2.0, 'sine');
+          playTone(getFrequency(targetNote), 2.0, 'sine');
+      }, 300);
+      
       // 連打防止のため入力をロック
       isWaiting = false;
 
-      // 2000ミリ秒（2秒）後に次の問題へ
+      // 2500ミリ秒（2.5秒）後に次の問題へ
       autoNextTimer = setTimeout(function() {
         nextQuestion();
-      }, 2000);
+      }, 2500);
     } else {
       // 不正解処理
       keyElement.classList.add('wrong');
