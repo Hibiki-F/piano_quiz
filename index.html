@@ -86,10 +86,13 @@
   </div>
 
   <div class="settings-group">
-    <span class="settings-title">音声設定:</span>
+    <span class="settings-title">各種設定:</span>
     <span class="settings-options">
-      <label style="color: #007bff; font-weight: bold;">
+      <label style="color: #6c757d; font-weight: bold;">
         <input type="checkbox" id="chk-sound" checked> 音程を再生する
+      </label>
+        <label style="color: #6c757d; font-weight: bold;">
+      <input type="checkbox" id="chk-hint"> 不正解時に半音数を表示する
       </label>
     </span>
   </div>
@@ -128,7 +131,8 @@
     M2: document.getElementById('chk-M2'),
     m3: document.getElementById('chk-m3'),
     M3: document.getElementById('chk-M3'),
-    sound: document.getElementById('chk-sound')
+    sound: document.getElementById('chk-sound'),
+    hint: document.getElementById('chk-hint')
   };
   const radioDirections = document.getElementsByName('direction');
 
@@ -138,8 +142,8 @@
   let hasStarted = false; // ゲームが始まったかどうか
   let isWaiting = false; // 回答待ち状態かどうか
   let autoNextTimer = null; // 自動遷移のタイマーID
-
   let audioCtx = null;
+  let currentIntervalObj = null; 
 
   function playTone(freq, duration = 2.0, type = 'sine') { 
     // 音なし設定なら何もしない
@@ -299,8 +303,8 @@
     feedbackText.textContent = "";
 
     // 音程と基準音の決定
-    const intervalObj = allowedIntervals[Math.floor(Math.random() * allowedIntervals.length)];
-    const intervalVal = intervalObj.val;
+    currentIntervalObj = allowedIntervals[Math.floor(Math.random() * allowedIntervals.length)];
+    const intervalVal = currentIntervalObj.val;
     
     // 出題範囲の計算
     if (currentDir === 'up') {
@@ -317,7 +321,7 @@
     keysElements[rootNote].classList.add('highlight');
     playTone(getFrequency(rootNote), 1.5, 'triangle');
     const directionText = currentDir === 'up' ? '上' : '下';
-    questionText.textContent = `光っているキーの「${intervalObj.name} ${directionText}」を選択してください`;
+    questionText.textContent = `光っているキーの「${currentIntervalObj.name} ${directionText}」を選択してください`;
     
     isWaiting = true;
   }
@@ -326,10 +330,18 @@
   function checkAnswer(noteIndex, keyElement) {
     if (!isWaiting) return;
 
+    const distance = Math.abs(noteIndex - rootNote);
+
     if (noteIndex === targetNote) {
       // 正解処理
       keyElement.classList.add('correct');
-      feedbackText.textContent = "正解！";
+
+      // 具体的なフィードバック
+      let msg = `正解！${currentIntervalObj.name}は半音${currentIntervalObj.val}個分です。`;
+      if (currentIntervalObj.val === 3) msg += "（暗い響き）";
+      if (currentIntervalObj.val === 4) msg += "（明るい響き）";
+
+      feedbackText.textContent = msg;
       feedbackText.style.color = "#2196F3";
 
       setTimeout(() => {
@@ -347,18 +359,23 @@
     } else {
       // 不正解処理
       keyElement.classList.add('wrong');
-      feedbackText.textContent = "残念！もう一度探してみよう！";
+
+      // ヒント設定がONの場合、基準音からの距離を表示
+      let failMsg = "残念！もう一度探してみよう！";
+      if (checkBoxes.hint.checked) {
+        failMsg += `（選択した場所は半音${distance}個分の場所です）`;
+      }
+
+      feedbackText.textContent = failMsg;
       feedbackText.style.color = "#F44336";
 
       setTimeout(function() {
         keyElement.classList.remove('wrong');
       }, 500);
-      // 不正解の場合は isWaiting を false にしない（入力を受け付け続ける）
+      // 不正解の場合は isWaiting を false にせず、入力を受け付け続ける
     }
   }
-
   init();
-
 })();
 </script>
 
